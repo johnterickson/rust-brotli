@@ -125,6 +125,10 @@ pub unsafe extern "C" fn BrotliEncoderDestroyInstance(state_ptr: *mut BrotliEnco
     if state_ptr.is_null() {
         return;
     }
+
+    // free pointers in the compressor before freeing the struct itself
+    crate::enc::encode::BrotliEncoderDestroyInstance(&mut (*state_ptr).compressor);
+
     if (*state_ptr).custom_allocator.alloc_func.is_some() {
         if let Some(free_fn) = (*state_ptr).custom_allocator.free_func {
             let _to_free = core::ptr::read(state_ptr);
