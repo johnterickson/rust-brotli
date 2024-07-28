@@ -132,7 +132,7 @@ impl <ReturnValue:Send+'static,
             if local_queue.shutdown{
               break;
             } else {
-              let _ = cvar.wait(local_queue); // unlock immediately, unfortunately
+              drop(cvar.wait(local_queue)); // unlock immediately, unfortunately
               continue;
             }
           };
