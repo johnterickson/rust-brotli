@@ -14,7 +14,7 @@ use super::bit_cost::{shannon_entropy, BitsEntropy};
 use super::brotli_bit_stream::{
     store_meta_block, store_meta_block_fast, store_meta_block_trivial,
     store_uncompressed_meta_block, BrotliWriteEmptyLastMetaBlock, BrotliWriteMetadataMetaBlock,
-    MetaBlockSplit, RecoderState,
+    BrotliWritePaddingMetaBlock,MetaBlockSplit, RecoderState,
 };
 use super::combined_alloc::BrotliAlloc;
 use super::command::{get_length_code, BrotliDistanceParams, Command};
@@ -272,8 +272,16 @@ pub fn set_parameter(
         BROTLI_PARAM_APPENDABLE => params.appendable = value != 0,
         BROTLI_PARAM_MAGIC_NUMBER => params.magic_number = value != 0,
         BROTLI_PARAM_FAVOR_EFFICIENCY => params.favor_cpu_efficiency = value != 0,
+        BROTLI_PARAM_BYTE_ALIGN => params.byte_align = value != 0,
+        BROTLI_PARAM_BARE_STREAM => {
+            params.bare_stream = value != 0;
+            if !params.byte_align {
+                params.byte_align = value != 0;
+            }
+        }
         _ => return false,
     }
+
     true
 }
 
@@ -330,6 +338,8 @@ pub fn BrotliEncoderInitParams() -> BrotliEncoderParams {
         cdf_adaptation_detection: 0,
         prior_bitmask_detection: 0,
         literal_adaptation: [(0, 0); 4],
+        byte_align: false,
+        bare_stream: false,
         catable: false,
         use_dictionary: true,
         appendable: false,
@@ -548,6 +558,11 @@ pub fn SanitizeParams(params: &mut BrotliEncoderParams) {
     if params.catable {
         params.appendable = true;
     }
+    if params.bare_stream {
+        params.byte_align = true;
+    } else if !params.appendable {
+        params.byte_align = false;
+    }
 }
 
 fn ComputeLgBlock(params: &BrotliEncoderParams) -> i32 {
@@ -656,12 +671,15 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
             if self.params.quality == 0i32 || self.params.quality == 1i32 {
                 lgwin = max(lgwin, 18i32);
             }
-            EncodeWindowBits(
-                lgwin,
-                self.params.large_window,
-                &mut self.last_bytes_,
-                &mut self.last_bytes_bits_,
-            );
+
+            if !(self.params.catable && self.params.bare_stream) {
+                EncodeWindowBits(
+                    lgwin,
+                    self.params.large_window,
+                    &mut self.last_bytes_,
+                    &mut self.last_bytes_bits_,
+                );
+            }
         }
         if self.params.quality == 0i32 {
             InitCommandPrefixCodes(
@@ -1915,6 +1933,19 @@ fn DecideOverLiteralContextModeling(
         );
     }
 }
+fn WriteEmptyLastBlocksInternal(
+    params: &BrotliEncoderParams,
+    storage_ix: &mut usize,
+    storage: &mut [u8],
+) {
+    // insert empty block for byte alignment if required
+    if params.byte_align {
+        BrotliWritePaddingMetaBlock(storage_ix, storage);
+    }
+    if !params.bare_stream {
+        BrotliWriteEmptyLastMetaBlock(storage_ix, storage)
+    }
+}
 fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
     alloc: &mut Alloc,
     data: &[u8],
@@ -1947,7 +1978,8 @@ fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
     ),
 {
     let actual_is_last = is_last;
-    if params.appendable {
+
+    if params.appendable || params.byte_align {
         is_last = false;
     } else {
         assert!(!params.catable); // Sanitize Params senforces this constraint
@@ -1957,8 +1989,7 @@ fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
     let literal_context_lut = BROTLI_CONTEXT_LUT(literal_context_mode);
     let mut block_params = params.clone();
     if bytes == 0usize {
-        BrotliWriteBits(2usize, 3, storage_ix, storage);
-        *storage_ix = storage_ix.wrapping_add(7u32 as usize) & !7u32 as usize;
+        WriteEmptyLastBlocksInternal(params, storage_ix, storage);
         return;
     }
     if !should_compress(
@@ -1985,7 +2016,7 @@ fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
             cb,
         );
         if actual_is_last != is_last {
-            BrotliWriteEmptyLastMetaBlock(storage_ix, storage)
+            WriteEmptyLastBlocksInternal(params, storage_ix, storage);
         }
         return;
     }
@@ -2000,6 +2031,7 @@ fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
                                 params.dist.num_direct_distance_codes,
                                 params.dist.distance_postfix_bits);
     }*/
+
     // why was this removed??
     if params.quality <= 2 {
         store_meta_block_fast(
@@ -2140,7 +2172,7 @@ fn WriteMetaBlockInternal<Alloc: BrotliAlloc, Cb>(
         );
     }
     if actual_is_last != is_last {
-        BrotliWriteEmptyLastMetaBlock(storage_ix, storage)
+        WriteEmptyLastBlocksInternal(params, storage_ix, storage);
     }
 }
 
@@ -2222,6 +2254,10 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
             return false;
         }
         let mut storage_ix: usize = usize::from(self.last_bytes_bits_);
+        // fixup for empty stream - note: catable is always appendable
+        if bytes == 0 && self.params.byte_align && self.params.appendable && !self.params.catable {
+            BrotliWritePaddingMetaBlock(&mut storage_ix, self.storage_.slice_mut());
+        }
         {
             let meta_size = max(
                 bytes as usize,
