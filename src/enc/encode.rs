@@ -2254,10 +2254,6 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
             return false;
         }
         let mut storage_ix: usize = usize::from(self.last_bytes_bits_);
-        // fixup for empty stream - note: catable is always appendable
-        if bytes == 0 && self.params.byte_align && self.params.appendable && !self.params.catable {
-            BrotliWritePaddingMetaBlock(&mut storage_ix, self.storage_.slice_mut());
-        }
         {
             let meta_size = max(
                 bytes as usize,
@@ -2284,6 +2280,11 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
                 catable_header_size = storage_ix >> 3;
                 *out_size = catable_header_size;
                 self.is_first_mb = IsFirst::HeaderWritten;
+            }
+
+            // fixup for empty stream - note: catable is always appendable
+            if bytes == 0 && self.params.byte_align && self.params.appendable && !self.params.catable {
+                BrotliWritePaddingMetaBlock(&mut storage_ix, self.storage_.slice_mut());
             }
         }
         if let IsFirst::BothCatableBytesWritten = self.is_first_mb {
