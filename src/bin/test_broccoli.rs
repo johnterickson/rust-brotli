@@ -5,14 +5,14 @@
 extern crate brotli_decompressor;
 extern crate core;
 
-use std::io::Write;
 use core::cmp::{max, min};
+use std::io::Write;
 
 use super::brotli::concat::{BroCatli, BroCatliResult};
 use super::brotli::enc::BrotliEncoderParams;
 use super::integration_tests::UnlimitedBuffer;
-use brotli_decompressor::{CustomRead, CustomWrite};
 use super::Rebox;
+use brotli_decompressor::{CustomRead, CustomWrite};
 
 const RANDOM_THEN_UNICODE: &'static [u8] = include_bytes!("../../testdata/random_then_unicode");
 const ALICE: &'static [u8] = include_bytes!("../../testdata/alice29.txt");
@@ -612,8 +612,15 @@ fn test_concat() {
         for block_align_option in block_align_options.iter_mut().take(options_len) {
             byte_align_params(block_align_option);
         }
-        super::compress(src, dsts.1, 4096, &block_align_options[min(index, options_len - 1)], &[], 1).unwrap();
-        
+        super::compress(
+            src,
+            dsts.1,
+            4096,
+            &block_align_options[min(index, options_len - 1)],
+            &[],
+            1,
+        )
+        .unwrap();
     }
     concat_many_subsets(&mut files, &mut ufiles, &mut byte_aligned_ufiles, None);
     concat_many_subsets(&mut files, &mut ufiles, &mut byte_aligned_ufiles, Some(28));

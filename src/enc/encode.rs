@@ -14,7 +14,7 @@ use super::bit_cost::{shannon_entropy, BitsEntropy};
 use super::brotli_bit_stream::{
     store_meta_block, store_meta_block_fast, store_meta_block_trivial,
     store_uncompressed_meta_block, BrotliWriteEmptyLastMetaBlock, BrotliWriteMetadataMetaBlock,
-    BrotliWritePaddingMetaBlock,MetaBlockSplit, RecoderState,
+    BrotliWritePaddingMetaBlock, MetaBlockSplit, RecoderState,
 };
 use super::combined_alloc::BrotliAlloc;
 use super::command::{get_length_code, BrotliDistanceParams, Command};
@@ -2283,7 +2283,11 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
             }
 
             // fixup for empty stream - note: catable is always appendable
-            if bytes == 0 && self.params.byte_align && self.params.appendable && !self.params.catable {
+            if bytes == 0
+                && self.params.byte_align
+                && self.params.appendable
+                && !self.params.catable
+            {
                 BrotliWritePaddingMetaBlock(&mut storage_ix, self.storage_.slice_mut());
             }
         }
