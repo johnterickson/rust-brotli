@@ -10,3 +10,4 @@ decompressor_d
 catbrotli_d
 brotli_tool
 brotli_tool_d
+*.exe
