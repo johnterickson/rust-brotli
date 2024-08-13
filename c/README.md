@@ -50,6 +50,15 @@ appendable.br catable1.br catable2.br catable3.br
 or simply
 catable0.br catable1.br catable2.br catable3.br
 
+## Building on Windows
+elevated powershell:
+winget install msys2.msys2
+
+from msys2:
+export PATH=$PATH:/c/Users/$USERNAME/.cargo/bin
+pacman -S make gcc
+make
+
 # Multithreaded Compression
 The C FFI allows you to create a workpool which may be used to compress multiple files without recreating threads on each compression
 ```rust
