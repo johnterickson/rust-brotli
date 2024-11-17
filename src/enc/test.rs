@@ -216,8 +216,36 @@ fn oneshot_compress(
 
     (true, next_out_offset)
 }
+static lock32: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-fn oneshot_decompress(compressed: &[u8], output: &mut [u8]) -> (BrotliResult, usize, usize) {
+/// 32bit systems do not have sufficient memory to compress multiple items
+/// at the same time with the current limits and defaults. So we instead spin
+/// until a process has completed compression. We cannot use proper locks
+/// in nostd, so we fall back to this simple spin lock.
+#[cfg(target_pointer_width = "32")]
+fn lock_if_32bit(){
+    use core::sync::atomic::Ordering;
+    loop {
+        let cur = lock32.fetch_add(1, Ordering::SeqCst);
+        if cur == 0 {
+            return;
+        }
+        lock32.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+#[cfg(target_pointer_width = "32")]
+fn unlock_if_32bit(){
+    use core::sync::atomic::Ordering;
+    lock32.fetch_sub(1, Ordering::SeqCst);
+}
+#[cfg(not(target_pointer_width = "32"))]
+fn lock_if_32bit(){
+}
+#[cfg(not(target_pointer_width = "32"))]
+fn unlock_if_32bit(){
+}
+
+pub(crate) fn oneshot_decompress(compressed: &[u8], output: &mut [u8]) -> (BrotliResult, usize, usize) {
     let mut available_in: usize = compressed.len();
     let mut available_out: usize = output.len();
     let mut stack_u8_buffer = define_allocator_memory_pool!(128, u8, [0; 100 * 1024], stack);
@@ -260,6 +288,7 @@ fn oneshot(
     in_buffer_size: usize,
     out_buffer_size: usize,
 ) -> (BrotliResult, usize, usize) {
+    lock_if_32bit();
     let (success, mut available_in) = oneshot_compress(
         input,
         compressed,
@@ -273,7 +302,9 @@ fn oneshot(
         //return (BrotliResult::ResultFailure, 0, 0);
         available_in = compressed.len();
     }
-    oneshot_decompress(&mut compressed[..available_in], output)
+    let ret = oneshot_decompress(&mut compressed[..available_in], output);
+    unlock_if_32bit();
+    ret
 }
 
 #[test]
@@ -548,6 +579,27 @@ fn test_roundtrip_empty() {
     }
     assert_eq!(output_offset, 0);
     assert_eq!(compressed_offset, compressed.len());
+}
+
+#[cfg(feature="std")]
+#[test]
+fn test_compress_into_short_buffer() {
+    use std::io::{Cursor, Write, ErrorKind};
+
+    // this plaintext should compress to 11 bytes
+    let plaintext = [0u8; 2048];
+
+    // but we only provide space for 10
+    let mut output_buffer = [0u8; 10];
+    let mut output_cursor = Cursor::new(&mut output_buffer[..]);
+
+    let mut w = crate::CompressorWriter::new(&mut output_cursor,
+                                         4096, 4, 22);
+    assert_eq!(w.write(&plaintext).unwrap(), 2048);
+    assert_eq!(w.flush().unwrap_err().kind(), ErrorKind::WriteZero);
+    w.into_inner();
+
+    println!("{output_buffer:?}");
 }
 /*
 

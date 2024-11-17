@@ -1461,7 +1461,7 @@ pub(crate) fn encoder_compress<
 >(
     empty_m8: Alloc,
     m8: &mut Alloc,
-    quality: i32,
+    mut quality: i32,
     lgwin: i32,
     mode: BrotliEncoderMode,
     input_size: usize,
@@ -1483,11 +1483,20 @@ pub(crate) fn encoder_compress<
         return true;
     }
     let mut is_fallback = false;
+    let mut is_9_5 = false;
     if quality == 10 {
-        unimplemented!("need to set 9.5 here");
+        quality = 9;
+        is_9_5 = true;
     }
     if !is_fallback {
         let mut s_orig = BrotliEncoderStateStruct::new(core::mem::replace(m8, empty_m8));
+        if is_9_5 {
+            let mut params = BrotliEncoderParams::default();
+            params.q9_5 = true;
+            params.quality = 10;
+            ChooseHasher(&mut params);
+            s_orig.hasher_ = BrotliMakeHasher(m8, &params);
+        }
         let mut result: bool;
         {
             let s = &mut s_orig;
@@ -3070,5 +3079,36 @@ impl<Alloc: BrotliAlloc> BrotliEncoderStateStruct<Alloc> {
         let ret = self.encode_data(is_last != 0, force_flush != 0, out_size, metablock_callback);
         *output = self.storage_.slice_mut();
         ret
+    }
+}
+
+#[cfg(feature = "std")]
+mod test {
+    #[cfg(test)]
+    use alloc_stdlib::StandardAlloc;
+
+    #[test]
+    fn test_encoder_compress() {
+        let input = include_bytes!("../../testdata/alice29.txt");
+        let mut output_buffer = [0; 100000];
+        let mut output_len = output_buffer.len();
+        let ret = super::encoder_compress(
+            StandardAlloc::default(),
+            &mut StandardAlloc::default(),
+            9,
+            16,
+            super::BrotliEncoderMode::BROTLI_MODE_GENERIC,
+            input.len(),
+            input,
+            &mut output_len,
+            &mut output_buffer,
+            &mut |_,_,_,_|(),
+        );
+        assert!(ret);
+        assert_eq!(output_len,51737);
+        let mut roundtrip = [0u8; 200000];
+        let (_, s, t) = super::super::test::oneshot_decompress(&output_buffer[..output_len], &mut roundtrip[..]);
+        assert_eq!(roundtrip[..t], input[..]);
+        assert_eq!(s, output_len);
     }
 }
